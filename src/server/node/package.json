@@ -1,0 +1,23 @@
+{
+  "name": "eumachia",
+  "version": "0.0.1",
+  "description": "Eumachia renders a real, interactive \"Pay Now\" page for a BDO-backed invoice and creates the Stripe payment via Addie — the piece savage (which strips JavaScript) can't do on its own.",
+  "main": "eumachia.js",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freyja-love-and-magic/eumachia.git"
+  },
+  "scripts": {
+    "start": "node eumachia.js"
+  },
+  "dependencies": {
+    "addie-js": "^0.0.7",
+    "bdo-js": "latest",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "node-fetch": "^3.3.2",
+    "sessionless-node": "latest"
+  }
+}
