@@ -378,11 +378,19 @@ bootstrapIdentity();
 //
 // config.port already honours PORT and defaults to 3013 (not eumachia's
 // historical 3011, which is covenant's on the shared box).
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const PORT = config.port;
-  app.listen(PORT, () => {
-    console.log(`Eumachia listening on port ${PORT}`);
-  });
-}
+// Listen unconditionally, the same way bdo.js and addie.js do.
+//
+// This used to be guarded by `import.meta.url === file://${process.argv[1]}`
+// so the netlify-gateway bundle could import the app and bind it itself. That
+// bundle is retired, and the guard is actively harmful under pm2: pm2's fork
+// mode doesn't exec the script directly, it loads it through
+// lib/ProcessContainerFork.js, so process.argv[1] is pm2's wrapper and the
+// comparison is always false. The result was a silent crash loop — the module
+// loaded, bootstrapped, never listened, ran out of work, and exited 0, over
+// and over. Don't reintroduce the guard.
+const PORT = config.port;
+app.listen(PORT, () => {
+  console.log(`Eumachia listening on port ${PORT}`);
+});
 
 export default app;
