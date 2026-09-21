@@ -80,8 +80,21 @@ Issuing. They're two different Addie routes
 backed by two different processors.
 
 That method did not exist in addie-js until **0.0.7**; eumachia's call against
-any earlier version throws `TypeError`. `package.json` pins `^0.0.7` for
-exactly this reason — don't relax it.
+any earlier version throws `TypeError`. **0.0.8 is now the floor**, for a
+second reason: `getPaymentIntent` took five parameters until then and
+silently dropped the `merchant` argument `payments.js` passes as its sixth.
+Without it the payment intent carries no `merchant_pubkey`, the payout step
+finds no one to pay, and the charge succeeds while the creator's money stays
+on the platform account. Don't relax the pin.
+
+## Tests
+
+`npm run test:payments` (see `src/server/node/test/README.md`) exercises
+every failure mode of the payment and payout legs against a live deployment
+in Stripe test mode — card declines, 3DS, disputes, and the payout cases
+where the payer is charged successfully and the creator is paid nothing. The
+README doubles as the manual-testing guide: each case names the Stripe test
+card or token that triggers it.
 
 ## Configuration
 

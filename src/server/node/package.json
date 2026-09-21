@@ -10,7 +10,8 @@
     "url": "git+https://github.com/freyja-love-and-magic/eumachia.git"
   },
   "scripts": {
-    "start": "node eumachia.js"
+    "start": "node eumachia.js",
+    "test:payments": "node test/payment-failures.mjs"
   },
   "dependencies": {
     "addie-js": "^0.0.8",
