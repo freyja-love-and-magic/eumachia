@@ -3,9 +3,10 @@
 Every way paying an invoice can fail, with how to reach each one by hand.
 
 ```
-npm run test:payments              # all 23 cases
+npm run test:payments              # all 31 cases
 npm run test:payments -- cards     # just the card declines
 npm run test:payments -- payout    # just the creator-payout cases
+npm run test:payments -- retry     # just the retry route
 ```
 
 Runs against a live deployment in Stripe **test mode**; no real money moves.
@@ -18,7 +19,7 @@ just the publishable key and the intent's own client secret, which is what
 Stripe.js does inside the pay page. Cards are never handled directly —
 every case uses one of Stripe's shared `pm_card_*` tokens.
 
-`23/23 as documented` means behaviour matches this file. A `CHANGED` line
+`31/31 as documented` means behaviour matches this file. A `CHANGED` line
 means something moved: possibly a fix, possibly a regression. Read before
 "repairing" the test.
 
@@ -97,6 +98,42 @@ Two notes on these:
   less clearly than the "No Stripe Connected Account" a *known* creator
   without an account gets. Worth improving before this text ends up in front
   of anyone.
+
+### What the creator's app is told
+
+`/complete` records the payout outcome and `/status` returns it under
+`payout`, so getpayed can tell "paid and the money reached me" from "paid
+and it didn't". Before this they were indistinguishable — both `paid: true`.
+
+| Case | Reported | getpayed shows |
+|---|---|---|
+| `reported/payout-sent` | `state: sent`, `amount: 2275`, transfer id | "Paid — $22.75 sent to your Stripe" |
+| `reported/payout-failed-onboarding` | `state: failed`, `reason: onboarding_incomplete` | "Paid — payout is waiting on your Stripe setup" + Finish Setup, Retry |
+| `reported/payout-failed-no-account` | `state: failed`, `reason: no_payout_account` | "Paid — no payout account to send it to" + Finish Setup |
+| `reported/payout-none` | nothing recorded (no payout attempted) | "Paid — but not routed to you" |
+
+The full set of reasons eumachia classifies: `onboarding_incomplete`,
+`no_payout_account`, `already_paid_out`, `platform_funds`,
+`payment_not_succeeded`, `unreachable`, `unknown`. getpayed branches on
+these, never on Stripe's error string, which it shows only as detail.
+
+`/complete` deliberately does **not** return payout state to the payer:
+whether the creator finished onboarding is not theirs to see, and not
+something they could act on.
+
+### Retrying a payout
+
+`POST /pay/:uuid/payout` takes the same pre-signed invoice credentials as
+the pay routes, so only someone holding the invoice link can call it — and
+in practice that's the creator's own app, signing with the invoice's BDO
+keypair.
+
+| Case | Trigger | Result |
+|---|---|---|
+| `retry/still-failing` | Tap Retry Payout without fixing the cause | Same reason returned; nothing charged again |
+| `retry/already-sent` | Retry an invoice already paid out | The **original** transfer id, unchanged — eumachia short-circuits rather than letting Stripe refuse a duplicate |
+| `retry/unpaid-invoice` | Retry before the invoice is paid | `400`, "This invoice has not been paid yet" |
+| `retry/bad-credentials` | Retry without valid invoice credentials | `404` |
 
 ### Disputes
 
