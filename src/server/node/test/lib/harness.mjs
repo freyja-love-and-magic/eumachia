@@ -216,8 +216,19 @@ export async function paymentStatus(uuid) {
   return { status: res.status, ...(await res.json().catch(() => ({}))) };
 }
 
+/** Asks eumachia to retry a payout — what getpayed's Retry Payout does. */
+export async function retryPayout(uuid, credentials) {
+  const res = await fetch(`${config.eumachia}pay/${uuid}/payout`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(credentials),
+  });
+  const body = await res.json().catch(() => ({}));
+  return { status: res.status, ...body };
+}
+
 /**
- * Runs the payout leg and reports its result. eumachia calls this itself
+ * Runs the payout leg directly through Addie, bypassing eumachia's record.
+ * Used to see what a transfer does independently of what eumachia stored. eumachia calls this itself
  * inside /complete but swallows the outcome, so the tests call it directly
  * to see what a creator's payout actually did.
  */

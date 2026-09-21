@@ -315,15 +315,23 @@ app.post('/pay/:uuid/complete', async (req, res) => {
 
     if (!alreadyPaid && invoice.creatorAddiePubKey) {
       try {
-        await payments.payOutCreator(uuid);
+        const payout = await payments.payOutCreator(uuid);
+        if (payout?.state !== 'sent') {
+          console.error(`Payout did not send for invoice ${uuid}:`, payout);
+        }
       } catch (err) {
         // The invoice is still correctly marked paid even if the payout
-        // itself fails — worth surfacing/retrying manually, not a reason
-        // to fail the payer's own confirmation.
+        // itself fails — that's the payer's side of the deal, and it did
+        // happen. payOutCreator persists the failure, so the creator's app
+        // can show it and retry (POST /pay/:uuid/payout) instead of the
+        // money quietly going missing.
         console.error(`Payout failed for invoice ${uuid}:`, err);
       }
     }
 
+    // Deliberately not returning the payout state to the PAYER: whether the
+    // creator's onboarding is finished is none of their business, and
+    // nothing they could act on.
     res.json({ success: true, ...result });
   } catch (err) {
     console.error('Error marking invoice paid:', err);
@@ -331,8 +339,51 @@ app.post('/pay/:uuid/complete', async (req, res) => {
   }
 });
 
-// Used by Gelder itself (not the payer's browser) to poll for online
-// payment — eumachia owns this record, so no read credentials needed here.
+/**
+ * Retries a payout the creator's app has been shown as failed.
+ *
+ * Creator-only, by construction: it takes the same pre-signed invoice read
+ * credentials as the pay routes, and only the invoice's own publisher can
+ * mint those. A payer holding a pay link technically could call it too, but
+ * it moves money only towards the creator, and Stripe's source-amount cap
+ * makes a duplicate impossible — so the worst they can do is retry a payout
+ * that was going to be retried anyway.
+ */
+app.post('/pay/:uuid/payout', async (req, res) => {
+  try {
+    const { uuid } = req.params;
+    const { hash, timestamp, signature } = req.body || {};
+    if (!hash || !timestamp || !signature) {
+      return res.status(400).json({ error: 'Missing read credentials' });
+    }
+    const invoice = await invoices.getInvoice(uuid, hash, timestamp, signature);
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    const status = await payments.readPaymentStatus(uuid);
+    if (!status?.paid) {
+      return res.status(400).json({ error: 'This invoice has not been paid yet' });
+    }
+    if (!invoice.creatorAddiePubKey) {
+      return res.json({ payout: { state: 'none' } });
+    }
+    // Already sent — don't hand Stripe a duplicate just to be told no.
+    if (status.payout?.state === 'sent') {
+      return res.json({ payout: status.payout });
+    }
+
+    const payout = await payments.payOutCreator(uuid);
+    res.json({ payout });
+  } catch (err) {
+    console.error('Error retrying payout:', err);
+    res.status(500).json({ error: 'Could not retry the payout' });
+  }
+});
+
+// Used by getpayed itself (not the payer's browser) to poll for online
+// payment and for what the payout did — eumachia owns this record, so no
+// read credentials needed here.
 app.get('/pay/:uuid/status', async (req, res) => {
   try {
     const status = await payments.readPaymentStatus(req.params.uuid);

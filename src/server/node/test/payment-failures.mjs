@@ -19,7 +19,7 @@
 import {
   config, mintPayableCreator, mintUnfinishedCreator, creatorStatus,
   publishInvoice, getPayPage, createIntent, payWithCard, completePayment,
-  paymentStatus, runPayout,
+  paymentStatus, runPayout, retryPayout,
 } from './lib/harness.mjs';
 
 // ── Cases ───────────────────────────────────────────────────────────────────
@@ -332,6 +332,167 @@ const cases = [
     expect: (r) => [
       [r.intentStatus === 'succeeded', `charge succeeds, got ${r.intentStatus}`],
       [!!r.transferId, `payout still works off an unsettled charge, got error: ${r.transferError}`],
+    ],
+  },
+
+  // ── What the creator's app is told ───────────────────────────────────────
+  //
+  // /complete records the payout outcome and /status hands it back, so
+  // getpayed can distinguish "paid and the money reached me" from "paid and
+  // it didn't". Before this, both looked identical: paid: true.
+
+  {
+    id: 'reported/payout-sent',
+    what: 'A successful payout is reported to the creator',
+    trigger: 'Ordinary paid invoice with onboarding finished. getpayed shows "Paid — $22.75 sent".',
+    async run() {
+      const creator = await mintPayableCreator();
+      const { uuid, credentials } = await publishInvoice({ creatorPubKey: creator.pubKey });
+      const intent = await createIntent(uuid, credentials);
+      await payWithCard(intent, 'pm_card_bypassPending');
+      await completePayment(uuid, credentials);
+      const status = await paymentStatus(uuid);
+      return { paid: status.paid, payout: status.payout };
+    },
+    expect: (r) => [
+      [r.paid === true, `invoice paid, got ${r.paid}`],
+      [r.payout?.state === 'sent', `payout state "sent", got ${r.payout?.state}`],
+      [r.payout?.amount === 2275, `amount 2275, got ${r.payout?.amount}`],
+      [!!r.payout?.transferId, `a transfer id, got ${r.payout?.transferId}`],
+    ],
+  },
+
+  {
+    id: 'reported/payout-failed-onboarding',
+    what: 'A payout blocked by unfinished onboarding is reported, with a reason',
+    trigger: 'Creator closed the Stripe sheet early, then got paid. getpayed shows "Paid — payout failed. Finish your Stripe setup."',
+    async run() {
+      const creator = await mintUnfinishedCreator();
+      const { uuid, credentials } = await publishInvoice({ creatorPubKey: creator.pubKey });
+      const intent = await createIntent(uuid, credentials);
+      await payWithCard(intent, 'pm_card_bypassPending');
+      await completePayment(uuid, credentials);
+      const status = await paymentStatus(uuid);
+      return { paid: status.paid, payout: status.payout };
+    },
+    expect: (r) => [
+      [r.paid === true, `invoice paid, got ${r.paid}`],
+      [r.payout?.state === 'failed', `payout state "failed", got ${r.payout?.state}`],
+      [r.payout?.reason === 'onboarding_incomplete', `reason "onboarding_incomplete", got ${r.payout?.reason}`],
+      [!!r.payout?.error, `Stripe's own wording kept for logs, got ${r.payout?.error}`],
+    ],
+  },
+
+  {
+    id: 'reported/payout-failed-no-account',
+    what: 'A payout to a vanished identity is reported as no payout account',
+    trigger: 'App reinstalled; an older invoice still names the previous identity, and someone pays it.',
+    async run() {
+      const { uuid, credentials } = await publishInvoice({ creatorPubKey: '02' + 'cd'.repeat(32) });
+      const intent = await createIntent(uuid, credentials);
+      await payWithCard(intent, 'pm_card_bypassPending');
+      await completePayment(uuid, credentials);
+      const status = await paymentStatus(uuid);
+      return { payout: status.payout };
+    },
+    expect: (r) => [
+      [r.payout?.state === 'failed', `payout state "failed", got ${r.payout?.state}`],
+      [r.payout?.reason === 'no_payout_account', `reason "no_payout_account", got ${r.payout?.reason}`],
+    ],
+  },
+
+  {
+    id: 'reported/payout-none',
+    what: 'An invoice with no creator reports "none", not a failure',
+    trigger: 'Invoice created before Stripe was connected. Nothing to pay out, so nothing to fix.',
+    async run() {
+      const { uuid, credentials } = await publishInvoice({ creatorPubKey: null });
+      const intent = await createIntent(uuid, credentials);
+      await payWithCard(intent, 'pm_card_bypassPending');
+      await completePayment(uuid, credentials);
+      const status = await paymentStatus(uuid);
+      return { paid: status.paid, payout: status.payout };
+    },
+    // No payout is attempted at all in this case (eumachia skips it when the
+    // invoice has no creator), so there is nothing recorded to report.
+    expect: (r) => [
+      [r.paid === true, `invoice paid, got ${r.paid}`],
+      [!r.payout || r.payout.state === 'none', `no payout to report, got ${JSON.stringify(r.payout)}`],
+    ],
+  },
+
+  // ── Retrying a payout ────────────────────────────────────────────────────
+
+  {
+    id: 'retry/still-failing',
+    what: 'Retry while the cause is unfixed reports the same failure',
+    trigger: 'Tap Retry Payout in getpayed without finishing onboarding first.',
+    async run() {
+      const creator = await mintUnfinishedCreator();
+      const { uuid, credentials } = await publishInvoice({ creatorPubKey: creator.pubKey });
+      const intent = await createIntent(uuid, credentials);
+      await payWithCard(intent, 'pm_card_bypassPending');
+      await completePayment(uuid, credentials);
+      const retry = await retryPayout(uuid, credentials);
+      return { status: retry.status, payout: retry.payout };
+    },
+    expect: (r) => [
+      [r.status === 200, `200, got ${r.status}`],
+      [r.payout?.reason === 'onboarding_incomplete', `same reason as before, got ${r.payout?.reason}`],
+    ],
+  },
+
+  {
+    id: 'retry/already-sent',
+    what: 'Retry after a successful payout does not pay twice',
+    trigger: 'Tap Retry Payout on an invoice already paid out (or double-tap it).',
+    async run() {
+      const creator = await mintPayableCreator();
+      const { uuid, credentials } = await publishInvoice({ creatorPubKey: creator.pubKey });
+      const intent = await createIntent(uuid, credentials);
+      await payWithCard(intent, 'pm_card_bypassPending');
+      await completePayment(uuid, credentials);
+      const before = await paymentStatus(uuid);
+      const retry = await retryPayout(uuid, credentials);
+      return { firstTransfer: before.payout?.transferId, retryState: retry.payout?.state, retryTransfer: retry.payout?.transferId };
+    },
+    expect: (r) => [
+      [r.retryState === 'sent', `still "sent", got ${r.retryState}`],
+      // The SAME transfer comes back — eumachia short-circuits rather than
+      // handing Stripe a duplicate to refuse.
+      [r.retryTransfer === r.firstTransfer, `the original transfer id, got ${r.retryTransfer} vs ${r.firstTransfer}`],
+    ],
+  },
+
+  {
+    id: 'retry/unpaid-invoice',
+    what: 'Retry on an unpaid invoice is refused',
+    trigger: 'Not reachable from the app — getpayed only offers Retry on a paid invoice. Guards the route itself.',
+    async run() {
+      const creator = await mintPayableCreator();
+      const { uuid, credentials } = await publishInvoice({ creatorPubKey: creator.pubKey });
+      const retry = await retryPayout(uuid, credentials);
+      return { status: retry.status, error: retry.error };
+    },
+    expect: (r) => [
+      [r.status === 400, `400, got ${r.status}`],
+      [/has not been paid/i.test(r.error || ''), `says it is not paid yet, got ${r.error}`],
+    ],
+  },
+
+  {
+    id: 'retry/bad-credentials',
+    what: 'Retry without valid invoice credentials is refused',
+    trigger: 'Someone who does not hold the invoice link tries to trigger a payout.',
+    async run() {
+      const creator = await mintPayableCreator();
+      const { uuid, credentials } = await publishInvoice({ creatorPubKey: creator.pubKey });
+      const tampered = { ...credentials, signature: credentials.signature.replace(/.$/, (c) => (c === 'a' ? 'b' : 'a')) };
+      const retry = await retryPayout(uuid, tampered);
+      return { status: retry.status, error: retry.error };
+    },
+    expect: (r) => [
+      [r.status === 404, `refused (404), got ${r.status}`],
     ],
   },
 
