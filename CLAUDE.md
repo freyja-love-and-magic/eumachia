@@ -70,6 +70,51 @@ everything comes up at once and eumachia can lose the race with ECONNREFUSED.
 Without the retry, `bdoUuid`/`addieUuid` stay null for the life of the process
 and every `/pay/:uuid` afterward silently fails.
 
+### The payout leg is recorded, not just attempted
+
+"The payer was charged" and "the creator got the money" are different facts,
+and for most of this service's life only the first was written down. A payout
+could fail — onboarding unfinished, no destination, a transfer Stripe
+refused — and the payment record still said paid, with the money sitting on
+the platform account and the creator's app showing **Paid**.
+
+So `payments.js` now records the outcome: `summarizePayout` writes what
+happened, `classifyPayoutError` turns Stripe's message into a stable reason
+the apps can branch on, and `writePayout` persists it alongside the payment.
+`payOutCreator` stores its outcome whether it succeeded or not.
+
+The reasons are the contract with getpayed. Don't rename them without
+changing `describePayout` there:
+
+`onboarding_incomplete`, `no_payout_account`, `already_paid_out`,
+`platform_funds`, `payment_not_succeeded`, `unreachable`, `unknown`.
+
+`POST /pay/:uuid/payout` retries one. A retry is worth offering for anything
+except `already_paid_out` — Stripe refusing a duplicate transfer means the
+money did go out — and the app uses exactly that predicate to decide whether
+to keep polling, so a mis-classification here turns into an infinite poll
+there.
+
+### What it took to get one payment through
+
+Five things, stacked, each only findable by running a real payment in test
+mode. Worth knowing before touching this path:
+
+1. Connected accounts created with `transfers` alone can't receive
+   transfers — Stripe wants **`card_payments` alongside it** without special
+   approval. Fixed in addie's account creation.
+2. `addie-js` 0.0.7's `getPaymentIntent` silently dropped the `merchant`
+   argument (see below), so the intent carried no `merchant_pubkey`.
+3. Even knowing the merchant, they weren't in the recipients list, so nothing
+   was transferred.
+4. Transfers drew on the platform's **available** balance, which is empty in
+   test mode. They now pass **`source_transaction`** (the charge's
+   `latest_charge`), funding the transfer from the charge itself.
+   `pm_card_bypassPending` is the test card that settles straight to
+   available balance if you want the other behaviour.
+5. The platform's own Stripe profile was incomplete, which Stripe reports as
+   a capability problem rather than as a profile problem.
+
 ### Addie client dependency
 
 `payments.js` calls `addie.processConnectedTransfers(paymentIntentId)`, which
@@ -89,12 +134,20 @@ on the platform account. Don't relax the pin.
 
 ## Tests
 
-`npm run test:payments` (see `src/server/node/test/README.md`) exercises
-every failure mode of the payment and payout legs against a live deployment
-in Stripe test mode — card declines, 3DS, disputes, and the payout cases
-where the payer is charged successfully and the creator is paid nothing. The
-README doubles as the manual-testing guide: each case names the Stripe test
-card or token that triggers it.
+`npm run test:payments` (`test/payment-failures.mjs`, with its harness in
+`test/lib/harness.mjs`) exercises **31 cases** across the payment and payout
+legs against a live deployment in Stripe test mode — card declines, 3DS,
+disputes, and the payout cases where the payer is charged successfully and
+the creator is paid nothing.
+
+`test/README.md` doubles as the manual-testing guide: each case names the
+Stripe test card, token or connected-account magic value that triggers it.
+That mapping is the valuable part — most of these failures cannot be
+reproduced any other way, and several were found only by running them.
+
+Note that Stripe's `pm_card_*` payment methods are shared test-mode objects
+rather than per-account ones, so two runs can interfere with each other. The
+harness accounts for that; new cases should too.
 
 ## Configuration
 
@@ -128,8 +181,15 @@ Netlify gateway bundle. On extraction:
 ## Related
 
 - **savage** — sibling service extracted at the same time; serves static
-  published SVG, cannot host a checkout
+  published SVG, cannot host a checkout. Its sanitizer also strips `data:`
+  URIs, which is why it silently dropped photos out of published cards until
+  September 2026; if you add anything image-bearing to a savage-served
+  payload, check that first.
 - **Addie** — payment processing; eumachia's `processConnectedTransfers` needs
   addie-js ≥ 0.0.7
 - **BDO** — where invoices and the payments ledger live
-- **getpayed/Gelder** — publishes the invoices eumachia renders
+- **getpayed** (formerly Gelder) — publishes the invoices eumachia renders,
+  and reads the payout record back. Its `CLAUDE.md` documents the
+  `PayoutRecord` shape and the UI states each reason maps to.
+- **allyabase/CLAUDE.md** → "How the apps and services fit together" — the
+  whole money path in one place, plus the other integration seams.
