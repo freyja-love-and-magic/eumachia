@@ -48,6 +48,37 @@ function renderPayPage({ uuid, hash, timestamp, signature, invoice, alreadyPaid 
   const toName = escapeHtml(invoice.toName || '');
   const amountLabel = formatAmount(invoice.amountCents, invoice.currency);
 
+  // ── Link preview ───────────────────────────────────────────────────────────
+  //
+  // Without these the pay link has nothing to build a card from, and iMessage,
+  // Slack, WhatsApp, Signal and Discord all fall back to printing the raw URL
+  // — which is ~200 characters here, because it carries a 128-char signature.
+  // savage has had og tags since it shipped, which is why BizBuz and
+  // Linkitylink links have always looked better than these.
+  //
+  // Truncation happens on the RAW description and escaping after, because
+  // cutting an already-escaped string can slice an entity in half and emit
+  // something like `&am`.
+  //
+  // No og:image yet, deliberately. The invoice SVG is right there on the BDO
+  // record, but og:image wants a raster: iMessage, Slack, WhatsApp, X and
+  // Facebook all skip image/svg+xml. Serving a PNG needs a rasterizer, so
+  // twitter:card stays `summary` rather than `summary_large_image`, which
+  // would reserve space for a picture that never arrives.
+  const rawDescription = String(invoice.description ?? '').replace(/\s+/g, ' ').trim();
+  const shortDescription = rawDescription.length > 120
+    ? `${rawDescription.slice(0, 119)}\u2026`
+    : rawDescription;
+  const previewTitle = escapeHtml(
+    invoice.fromName ? `Invoice from ${invoice.fromName}` : 'Invoice'
+  );
+  const previewDescription = escapeHtml(
+    [
+      alreadyPaid ? 'Paid' : formatAmount(invoice.amountCents, invoice.currency),
+      shortDescription,
+    ].filter(Boolean).join(' \u00b7 ')
+  );
+
   const paidBlock = `
     <div class="paid-banner">✅ This invoice has already been paid.</div>
   `;
@@ -204,6 +235,14 @@ function renderPayPage({ uuid, hash, timestamp, signature, invoice, alreadyPaid 
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Invoice from ${fromName || 'Gelder'}</title>
+<meta name="description" content="${previewDescription}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="GetPayed">
+<meta property="og:title" content="${previewTitle}">
+<meta property="og:description" content="${previewDescription}">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="${previewTitle}">
+<meta name="twitter:description" content="${previewDescription}">
 <style>
   html, body { height: 100%; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a001a; color: white; margin: 0; padding: 20px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; }
