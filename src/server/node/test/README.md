@@ -80,7 +80,7 @@ failure server-side and still returns `paid: true`.
 
 | Case | Trigger | Payer | Creator |
 |---|---|---|---|
-| `payout/happy-path` | Creator finished onboarding | charged $25 | **paid $22.75** (91%; platform keeps 9%) |
+| `payout/happy-path` | Creator finished onboarding | charged $25 | **paid $23.74** ($25 less Stripe's $1.03 and the platform's 0.9%, $0.23) |
 | `payout/onboarding-unfinished` | Tap "Set Up Payouts", close the sheet without finishing, then get paid | charged $25 | **nothing** — "destination account needs… transfers" |
 | `payout/no-account-at-all` | Invoice names a pubkey with no Stripe account — e.g. app reinstalled, new identity, older invoice still out there | charged $25 | **nothing** — "not found" |
 | `payout/no-creator-on-invoice` | Invoice created before Stripe was connected (getpayed now blocks this) | charged $25 | **nothing** — whole charge stays with the platform |
@@ -107,7 +107,7 @@ and it didn't". Before this they were indistinguishable — both `paid: true`.
 
 | Case | Reported | getpayed shows |
 |---|---|---|
-| `reported/payout-sent` | `state: sent`, `amount: 2275`, transfer id | "Paid — $22.75 sent to your Stripe" |
+| `reported/payout-sent` | `state: sent`, `amount: 2374`, transfer id | "Paid — $23.74 sent to your Stripe" |
 | `reported/payout-failed-onboarding` | `state: failed`, `reason: onboarding_incomplete` | "Paid — payout is waiting on your Stripe setup" + Finish Setup, Retry |
 | `reported/payout-failed-no-account` | `state: failed`, `reason: no_payout_account` | "Paid — no payout account to send it to" + Finish Setup |
 | `reported/payout-none` | nothing recorded (no payout attempted) | "Paid — but not routed to you" |

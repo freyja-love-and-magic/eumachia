@@ -219,9 +219,9 @@ const cases = [
       [r.transfersActive === true, `creator can receive transfers, got ${r.transfersActive}`],
       [r.paid === true, `invoice marked paid, got ${r.paid}`],
       // /complete already transferred, so re-running hits Stripe's
-      // source-amount cap — which names the amount it paid: 91% of $25,
-      // the platform keeping 9%.
-      [r.alreadyPaidOut, `creator already paid $22.75 by /complete, got: ${r.transferError}`],
+      // source-amount cap — which names the amount it paid: $25 less
+      // Stripe's $1.03 and the platform's 0.9% ($0.23).
+      [r.alreadyPaidOut, `creator already paid $23.74 by /complete, got: ${r.transferError}`],
     ],
   },
 
@@ -344,7 +344,7 @@ const cases = [
   {
     id: 'reported/payout-sent',
     what: 'A successful payout is reported to the creator',
-    trigger: 'Ordinary paid invoice with onboarding finished. getpayed shows "Paid — $22.75 sent".',
+    trigger: 'Ordinary paid invoice with onboarding finished. getpayed shows "Paid — $23.74 sent".',
     async run() {
       const creator = await mintPayableCreator();
       const { uuid, credentials } = await publishInvoice({ creatorPubKey: creator.pubKey });
@@ -357,7 +357,7 @@ const cases = [
     expect: (r) => [
       [r.paid === true, `invoice paid, got ${r.paid}`],
       [r.payout?.state === 'sent', `payout state "sent", got ${r.payout?.state}`],
-      [r.payout?.amount === 2275, `amount 2275, got ${r.payout?.amount}`],
+      [r.payout?.amount === 2374, `amount 2374, got ${r.payout?.amount}`],
       [!!r.payout?.transferId, `a transfer id, got ${r.payout?.transferId}`],
     ],
   },

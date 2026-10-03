@@ -8,9 +8,10 @@ addie.baseURL = config.addieBaseURL;
 
 // Real amount, read server-side from the invoice — never trust a
 // client-supplied amount for what to charge. When `merchantPubKey` is
-// present (the invoice creator has connected Stripe), requests a 91%/
-// 9%-minus-fees split via Addie's buildPayeeMetadata; Addie only embeds
-// this into the PaymentIntent's metadata at this point — it does NOT
+// present (the invoice creator has connected Stripe), requests the
+// merchant split via Addie's buildPayeeMetadata (Stripe's fee comes off,
+// then the platform's PLATFORM_FEE_PERCENT, 0.9% by default, and the
+// creator gets the rest); Addie only embeds this into the PaymentIntent's metadata at this point — it does NOT
 // transfer anything yet, so simply loading the pay page can never move
 // real money. The actual transfer only happens later, via payOutCreator,
 // after independently re-verifying the payment succeeded.
